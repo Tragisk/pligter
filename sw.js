@@ -1,6 +1,6 @@
 // Pligter service worker: gør appen installérbar og viser sidste version offline.
 // Data hentes altid live fra Supabase (caches ikke).
-const CACHE = "pligter-v1";
+const CACHE = "pligter-v2";
 const SKAL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

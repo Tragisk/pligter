@@ -125,6 +125,15 @@
     font-size: 15px; z-index: 20; max-width: calc(100% - 32px); box-shadow: 0 4px 16px rgba(0,0,0,.25); }
   .toast button { background: none; border: 0; color: #9be39e; font-weight: 700; cursor: pointer; padding: 4px; }
   .tom { color: var(--muted); text-align: center; padding: 24px 0; }
+  .opsum-rk { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 0 0 14px; }
+  .opsum-rk .opsummering { margin: 0; }
+  .opsum-rk .knap { flex: none; }
+  .hurtig { display: grid; gap: 8px; margin-bottom: 14px; }
+  .hurtig .to, .rediger-rk .to3 { display: grid; grid-template-columns: 1fr 120px; gap: 8px; }
+  .hurtig input[type=date], .rediger-rk input[type=date], #nFrist { width: 100%; }
+  .rk-knap { display: flex; gap: 8px; }
+  .rk-knap .knap:first-child { flex: 1; }
+  .maerke { font-size: 12px; color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -152,7 +161,24 @@
     </header>
 
     <section id="fOpgaver">
-      <p class="opsummering" id="opsummering"></p>
+      <div class="opsum-rk">
+        <p class="opsummering" id="opsummering"></p>
+        <button class="knap lille sekundaer" type="button" id="visHurtig">＋ Påmindelse</button>
+      </div>
+      <form class="boks-kort hurtig hidden" id="fHurtig">
+        <div>
+          <span class="felt-label">Påmindelse</span>
+          <input type="text" id="hNavn" placeholder="Fx Husk Lis' gave efter arbejde" required>
+        </div>
+        <div class="to">
+          <div><span class="felt-label">Dato</span><input type="date" id="hFrist" required></div>
+          <div><span class="felt-label">Forfalden dage før</span><input type="number" id="hVarsel" min="0" max="60" value="7" inputmode="numeric"></div>
+        </div>
+        <div class="rk-knap">
+          <button class="knap" type="submit">Tilføj påmindelse</button>
+          <button class="knap sekundaer" type="button" id="annullerHurtig">Annuller</button>
+        </div>
+      </form>
       <div class="liste" id="liste"></div>
       <h2>Dagligt</h2>
       <div class="daglig" id="dagligListe"></div>
@@ -167,7 +193,11 @@
         </div>
         <div class="to">
           <div><span class="felt-label">Hvor ofte</span><select id="nFrek"></select></div>
-          <div><span class="felt-label">Mail dage før</span><input type="number" id="nVarsel" min="0" max="60" inputmode="numeric"></div>
+          <div><span class="felt-label" id="nVarselLabel">Mail dage før</span><input type="number" id="nVarsel" min="0" max="60" inputmode="numeric"></div>
+        </div>
+        <div id="nFristBoks" class="hidden">
+          <span class="felt-label">Dato</span>
+          <input type="date" id="nFrist">
         </div>
         <button class="knap" type="submit">Tilføj opgave</button>
       </form>
@@ -209,11 +239,13 @@ const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const EJER = "achris@live.dk";
 
 const FREK = [
-  ["daglig", "Dagligt"], ["ugentlig", "Ugentligt"], ["14dage", "Hver 14. dag"], ["maanedlig", "Månedligt"],
-  ["kvartal", "Kvartalsvis"], ["halvaar", "Halvårligt"], ["aarlig", "Årligt"],
+  ["daglig", "Dagligt"], ["2dage", "Hver 2. dag"], ["ugentlig", "Ugentligt"], ["14dage", "Hver 14. dag"],
+  ["maanedlig", "Månedligt"], ["kvartal", "Kvartalsvis"], ["halvaar", "Halvårligt"], ["aarlig", "Årligt"],
+  ["engang", "Påmindelse (én gang)"],
 ];
 const FREK_TEKST = Object.fromEntries(FREK);
-const VARSEL = { daglig: 0, ugentlig: 1, "14dage": 2, maanedlig: 7, kvartal: 7, halvaar: 7, aarlig: 7 };
+FREK_TEKST.engang = "Påmindelse";
+const VARSEL = { daglig: 0, "2dage": 0, ugentlig: 1, "14dage": 2, maanedlig: 7, kvartal: 7, halvaar: 7, aarlig: 7, engang: 7 };
 const MDR = ["jan.", "feb.", "mar.", "apr.", "maj", "jun.", "jul.", "aug.", "sep.", "okt.", "nov.", "dec."];
 const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
 
@@ -234,9 +266,13 @@ function fmtDato(iso) {
   return `${d}. ${MDR[m - 1]}` + (y !== iAar ? ` ${y}` : "");
 }
 function dageTekst(n) { return n === 1 ? "1 dag" : `${n} dage`; }
-function idagISO() {
+function idagISO(plusDage = 0) {
   const d = new Date();
+  d.setDate(d.getDate() + plusDage);
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+function dageMellem(fraISO, tilISO) {
+  return Math.round((Date.parse(tilISO + "T00:00:00Z") - Date.parse(fraISO + "T00:00:00Z")) / 86400000);
 }
 let toastTimer;
 function toast(tekst, fortryd) {
@@ -251,6 +287,18 @@ function fejl(e) { console.error(e); toast("Noget gik galt: " + (e.message || e)
 
 /* ---------- farve og status ---------- */
 function vurder(o) {
+  if (o.frekvens === "engang") {
+    const d = o.dage_til_forfald;
+    const tilDato = dageMellem(idagISO(), o.frist);
+    let status;
+    if (tilDato < 0) status = `Datoen var ${fmtDato(o.frist)}`;
+    else if (tilDato === 0) status = "Det er i dag";
+    else if (tilDato === 1) status = `I morgen · ${fmtDato(o.frist)}`;
+    else status = `Om ${dageTekst(tilDato)} · ${fmtDato(o.frist)}`;
+    if (d <= 0) return { over: true, hue: 0, status };
+    const f = Math.min(1, Math.max(0, 1 - d / Math.max(1, o.interval_dage)));
+    return { over: false, hue: Math.round(120 * (1 - f)), status };
+  }
   if (o.sidste_dato == null) return { over: true, hue: 0, status: "Ikke registreret endnu" };
   const d = o.dage_til_forfald;
   if (d < 0) return { over: true, hue: 0, status: `Overskredet ${dageTekst(-d)}` };
@@ -262,7 +310,17 @@ function vurder(o) {
   else status = `Forfalder om ${dageTekst(d)} · ${fmtDato(o.forfald)}`;
   return { over: false, hue, status };
 }
-function sortNoegle(o) { return o.sidste_dato == null ? -1e9 : o.dage_til_forfald; }
+function sortNoegle(o) { return o.dage_til_forfald == null ? -1e9 : o.dage_til_forfald; }
+function erOver(o) {
+  if (o.frekvens === "engang") return o.dage_til_forfald <= 0;
+  return o.sidste_dato == null || o.dage_til_forfald < 0;
+}
+function metaTekst(o) {
+  if (o.frekvens === "engang") {
+    return o.dage_til_forfald > 0 ? `Påmindelse · forfalden fra ${fmtDato(o.forfald)}` : "Påmindelse";
+  }
+  return [FREK_TEKST[o.frekvens], o.sidste_dato ? `Sidst ${fmtDato(o.sidste_dato)}` : null].filter(Boolean).join(" · ");
+}
 
 /* ---------- login ---------- */
 function visLogin() {
@@ -324,20 +382,20 @@ async function hentOpgaver() {
 }
 
 function tegnOpgaver() {
-  const ikkeDaglig = opgaver.filter((o) => o.frekvens !== "daglig")
+  const ikkeDaglig = opgaver.filter((o) => o.frekvens !== "daglig" && !o.faerdig)
     .sort((a, b) => sortNoegle(a) - sortNoegle(b) || a.navn.localeCompare(b.navn, "da"));
   const daglig = opgaver.filter((o) => o.frekvens === "daglig")
     .sort((a, b) => a.sortering - b.sortering || a.navn.localeCompare(b.navn, "da"));
 
-  const over = ikkeDaglig.filter((o) => o.sidste_dato == null || o.dage_til_forfald < 0).length;
-  const snart = ikkeDaglig.filter((o) => o.sidste_dato != null && o.dage_til_forfald >= 0 && o.dage_til_forfald <= o.varsel_dage).length;
+  const over = ikkeDaglig.filter(erOver).length;
+  const snart = ikkeDaglig.filter((o) => o.frekvens !== "engang" && !erOver(o) && o.dage_til_forfald <= o.varsel_dage).length;
   $("opsummering").innerHTML = over || snart
     ? [over ? `<b>${over}</b> overskredet` : "", snart ? `<b>${snart}</b> forfalder snart` : ""].filter(Boolean).join(" · ")
     : "Alt er under kontrol 🌿";
 
   $("liste").innerHTML = ikkeDaglig.length ? ikkeDaglig.map((o) => {
     const v = vurder(o);
-    const meta = [FREK_TEKST[o.frekvens], o.sidste_dato ? `Sidst ${fmtDato(o.sidste_dato)}` : null].filter(Boolean).join(" · ");
+    const meta = metaTekst(o);
     return `<div class="kort${v.over ? " over" : ""}" style="--h:${v.hue}" data-id="${o.id}">
       <div class="kort-top">
         <div class="kort-tekst" data-handling="udvid">
@@ -424,16 +482,53 @@ async function tegnDetaljer(id) {
 function frekOptions(valgt) {
   return FREK.map(([k, t]) => `<option value="${k}"${k === valgt ? " selected" : ""}>${t}</option>`).join("");
 }
+/* ---------- hurtig påmindelse (forsiden) ---------- */
+function visHurtig(on) {
+  $("fHurtig").classList.toggle("hidden", !on);
+  $("visHurtig").classList.toggle("hidden", on);
+  if (on) {
+    $("hFrist").min = idagISO();
+    if (!$("hFrist").value) $("hFrist").value = idagISO(7);
+    $("hNavn").focus();
+  }
+}
+$("visHurtig").onclick = () => visHurtig(true);
+$("annullerHurtig").onclick = () => visHurtig(false);
+$("fHurtig").onsubmit = async (e) => {
+  e.preventDefault();
+  const navn = $("hNavn").value.trim();
+  const frist = $("hFrist").value;
+  if (!navn || !frist) return;
+  const { error } = await sb.from("pligt_opgaver").insert({
+    navn, frekvens: "engang", frist, varsel_dage: Number($("hVarsel").value || 0), sortering: 999,
+  });
+  if (error) return fejl(error);
+  $("hNavn").value = ""; $("hFrist").value = ""; $("hVarsel").value = 7;
+  visHurtig(false);
+  toast(`Påmindelse tilføjet`);
+  await hentOpgaver();
+};
+
+/* ---------- rediger ---------- */
+function opdaterNyForm() {
+  const engang = $("nFrek").value === "engang";
+  $("nVarsel").value = VARSEL[$("nFrek").value];
+  $("nVarselLabel").textContent = engang ? "Forfalden dage før" : "Mail dage før";
+  $("nFristBoks").classList.toggle("hidden", !engang);
+  $("nFrist").required = engang;
+  if (engang && !$("nFrist").value) $("nFrist").value = idagISO(7);
+}
 $("nFrek").innerHTML = frekOptions("ugentlig");
-$("nVarsel").value = VARSEL.ugentlig;
-$("nFrek").onchange = () => { $("nVarsel").value = VARSEL[$("nFrek").value]; };
+$("nFrek").onchange = opdaterNyForm;
+opdaterNyForm();
 $("fNy").onsubmit = async (e) => {
   e.preventDefault();
   const navn = $("nNavn").value.trim();
   if (!navn) return;
-  const { error } = await sb.from("pligt_opgaver").insert({
-    navn, frekvens: $("nFrek").value, varsel_dage: Number($("nVarsel").value || 0), sortering: 999,
-  });
+  const frekvens = $("nFrek").value;
+  const raekke = { navn, frekvens, varsel_dage: Number($("nVarsel").value || 0), sortering: 999 };
+  if (frekvens === "engang") raekke.frist = $("nFrist").value;
+  const { error } = await sb.from("pligt_opgaver").insert(raekke);
   if (error) return fejl(error);
   $("nNavn").value = "";
   toast(`${navn} tilføjet`);
@@ -442,20 +537,24 @@ $("fNy").onsubmit = async (e) => {
 };
 
 async function tegnRediger() {
-  const { data, error } = await sb.from("pligt_opgaver").select("*").order("sortering").order("navn");
+  const { data, error } = await sb.from("pligt_status").select("*").order("sortering").order("navn");
   if (error) return fejl(error);
   $("redigerGrupper").innerHTML = FREK.map(([k, t]) => {
     const gruppe = data.filter((o) => o.frekvens === k);
+    if (k === "engang") gruppe.sort((a, b) => (a.frist || "").localeCompare(b.frist || ""));
     if (!gruppe.length) return "";
-    return `<h2>${t}</h2><div class="liste">${gruppe.map((o) => `
+    return `<h2>${k === "engang" ? "Påmindelser" : t}</h2><div class="liste">${gruppe.map((o) => `
       <div class="rediger-rk${o.aktiv ? "" : " inaktiv"}" data-id="${o.id}">
         <input type="text" data-felt="navn" value="${esc(o.navn)}" aria-label="Navn">
         <div class="to">
           <select data-felt="frekvens" aria-label="Hvor ofte">${frekOptions(o.frekvens)}</select>
-          <input type="number" min="0" max="60" inputmode="numeric" data-felt="varsel_dage" value="${o.varsel_dage}" aria-label="Mail dage før">
+          <input type="number" min="0" max="60" inputmode="numeric" data-felt="varsel_dage" value="${o.varsel_dage}"
+            aria-label="${k === "engang" ? "Forfalden dage før" : "Mail dage før"}" title="${k === "engang" ? "Forfalden dage før datoen" : "Mail dage før forfald"}">
         </div>
+        ${k === "engang" ? `<div><span class="felt-label">Dato</span><input type="date" data-felt="frist" value="${o.frist || ""}"></div>` : ""}
         <div class="bund">
           <label class="toggle"><input type="checkbox" data-felt="aktiv"${o.aktiv ? " checked" : ""}> Aktiv</label>
+          ${o.faerdig ? '<span class="maerke">Udført ✓</span>' : ""}
           <span class="gemt"></span>
           <button class="knap lille fare" type="button" data-slet-opgave>Slet</button>
         </div>
@@ -470,7 +569,13 @@ $("redigerGrupper").addEventListener("change", async (e) => {
   let vaerdi = e.target.type === "checkbox" ? e.target.checked : e.target.value;
   if (felt === "varsel_dage") vaerdi = Number(vaerdi || 0);
   if (felt === "navn") { vaerdi = vaerdi.trim(); if (!vaerdi) return; }
-  const { error } = await sb.from("pligt_opgaver").update({ [felt]: vaerdi }).eq("id", rk.dataset.id);
+  if (felt === "frist" && !vaerdi) return;
+  const aendring = { [felt]: vaerdi };
+  if (felt === "frekvens" && vaerdi === "engang") {
+    const eksisterende = rk.querySelector('[data-felt="frist"]');
+    aendring.frist = (eksisterende && eksisterende.value) || idagISO(7);
+  }
+  const { error } = await sb.from("pligt_opgaver").update(aendring).eq("id", rk.dataset.id);
   if (error) return fejl(error);
   const g = rk.querySelector(".gemt");
   g.textContent = "Gemt ✓";
